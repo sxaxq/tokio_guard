@@ -9,6 +9,8 @@
 #include <map>
 #include <iomanip>
 
+#include "sqlitebebra.hpp"
+
 using namespace boost::asio;
 
 std::unordered_map<std::string, uint32_t> request_per_ip;
@@ -16,7 +18,8 @@ std::unordered_set<std::string> banned_ip;
 
 struct connection_t 
 {
-    connection_t(io_service& io) : timer(io), socket(io) { }
+    connection_t(io_service& io) : timer(io), socket(io) 
+    { }
 
     ip::tcp::socket socket;
     ip::address ip;
@@ -43,6 +46,7 @@ struct cfg_info {
     std::string bannedIpsSaveFile;
     uint16_t ddos_attack_detected_value;
     std::ofstream bannedIpFile;
+    sqlite3* db = nullptr;
 };
 
 cfg_info start_cfg{};
@@ -143,15 +147,17 @@ void handle_connection(std::shared_ptr<connection_t> conn) {
 
     std::string ip = conn->ip.to_string();
     request_per_ip[ip]++;
+    std::cout << "Temp: " << request_per_ip[ip] 
+       << " ddos attack detected: " << start_cfg.ddos_attack_detected_value << std::endl;
+
     if(request_per_ip[ip] > start_cfg.ddos_attack_detected_value) {
-        notify_print(get_current_time() + "detected ddos attack", notify_color::red);
-        banned_ip.emplace(ip);
-        start_cfg.bannedIpFile << ip << "\n";
+        notify_print(get_current_time() + " detected ddos attack", notify_color::red);
+        insertIP(ip);
         conn->socket.close();
         return;
     }
-    else if(banned_ip.find(ip) != banned_ip.end()) {
-        notify_print(get_current_time() + "detected banned ip", notify_color::red);
+    else if(existsInDb(ip)) {
+        notify_print(get_current_time() + " detected banned ip", notify_color::red);
         conn->socket.close();
         return;
     }
@@ -188,15 +194,17 @@ int main(int argc, char* argv[])
 {
     filled_color_map();
 
-    if(argc != 5) {
-        notify_print("Usage: <guard_address> <wait_page.html> <detected_value> <banned_ip_save_path>", notify_color::blue);
+    if(argc != 4) {
+        notify_print("Usage: <guard_address> <wait_page.html> <banned_ip_db_name>", notify_color::blue);
         return -1;
     }
     else {
         start_cfg.guard_address = std::string(argv[1]);
         start_cfg.guard_wait_page = std::string(argv[2]);
-        start_cfg.ddos_attack_detected_value = std::atoi(std::string(argv[3]).c_str()) - '0';
-        start_cfg.bannedIpsSaveFile = std::string(argv[4]);
+        start_cfg.ddos_attack_detected_value = 10;
+        data_base_init(std::string(argv[3]));
+        insertIP("12.12");
+        insertIP("12.12");
     }
 
     io_service io_service;
