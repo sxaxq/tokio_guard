@@ -14,15 +14,35 @@ using namespace boost::asio;
 std::unordered_map<std::string, uint32_t> request_per_ip;
 std::unordered_set<std::string> banned_ip;
 
+struct connection_t 
+{
+    connection_t(io_service& io) : timer(io), socket(io) { }
+
+    ip::tcp::socket socket;
+    ip::address ip;
+    uint16_t port;
+    steady_timer timer;
+    uint32_t request = 0;
+
+    bool request_fully_received = false;
+};
+
 struct cfg_info {
     cfg_info() = default;
 
-    cfg_info(const std::string& addr, const std::string& path_wait_page, uint16_t detected_value) :
-       guard_address(addr), guard_wait_page(path_wait_page), ddos_attack_detected_value(detected_value) {}
+    cfg_info(const std::string& addr, const std::string& path_wait_page, uint16_t detected_value, 
+        const std::string& bannedIpSavePath) :
+       guard_address(addr), guard_wait_page(path_wait_page), ddos_attack_detected_value(detected_value), 
+       bannedIpsSaveFile(bannedIpSavePath) 
+       { 
+         bannedIpFile.open(bannedIpsSaveFile);
+       }
 
     std::string guard_address;
     std::string guard_wait_page;
+    std::string bannedIpsSaveFile;
     uint16_t ddos_attack_detected_value;
+    std::ofstream bannedIpFile;
 };
 
 cfg_info start_cfg{};
@@ -35,7 +55,7 @@ std::map<notify_color, std::string> colorsIds;
 
 void filled_color_map() noexcept
 {
-    colorsIds[notify_color::green] = "\033[0;31m";
+    colorsIds[notify_color::green] = "\033[0;32m";
     colorsIds[notify_color::red] = "\033[0;31m";
     colorsIds[notify_color::blue] = "\033[0;34m";
 }
@@ -57,19 +77,6 @@ std::string get_current_time()
 
     return ss.str();
 }
-
-struct connection_t 
-{
-    connection_t(io_service& io) : timer(io), socket(io) { }
-
-    ip::tcp::socket socket;
-    ip::address ip;
-    uint16_t port;
-    steady_timer timer;
-    uint32_t request = 0;
-
-    bool request_fully_received = false;
-};
 
 void failed() 
 {
@@ -137,13 +144,14 @@ void handle_connection(std::shared_ptr<connection_t> conn) {
     std::string ip = conn->ip.to_string();
     request_per_ip[ip]++;
     if(request_per_ip[ip] > start_cfg.ddos_attack_detected_value) {
-        notify_print("detected ddos attack", notify_color::red);
+        notify_print(get_current_time() + "detected ddos attack", notify_color::red);
         banned_ip.emplace(ip);
+        start_cfg.bannedIpFile << ip << "\n";
         conn->socket.close();
         return;
     }
     else if(banned_ip.find(ip) != banned_ip.end()) {
-        notify_print("detected banned ip", notify_color::red);
+        notify_print(get_current_time() + "detected banned ip", notify_color::red);
         conn->socket.close();
         return;
     }
@@ -152,7 +160,7 @@ void handle_connection(std::shared_ptr<connection_t> conn) {
     }
     
     if(valid_user_agent) {
-        notify_print("client - " + ip + " is not ddos attack", notify_color::green);
+        notify_print(get_current_time() + " client - " + ip + " is not ddos attack", notify_color::green);
         std::this_thread::sleep_for(std::chrono::seconds(2)); 
         std::string html = "<script>window.location = ";
         html += "'" + start_cfg.guard_address + "'" + ";</script>";
@@ -170,7 +178,7 @@ void accept_connection(io_service& io_service) {
         auto conn = std::make_shared<connection_t>(io_service);
         acceptor.accept(conn->socket);
         conn->ip = conn->socket.remote_endpoint().address();
-        std::cout << "connected user" << std::endl;
+        std::cout << get_current_time() << " connected user" << std::endl;
         std::thread t(&handle_connection, conn);
         t.detach();
     }
@@ -180,14 +188,15 @@ int main(int argc, char* argv[])
 {
     filled_color_map();
 
-    if(argc != 4) {
-        notify_print("Usage: <guard_address> <wait_page.html> <detected_value>", notify_color::blue);
+    if(argc != 5) {
+        notify_print("Usage: <guard_address> <wait_page.html> <detected_value> <banned_ip_save_path>", notify_color::blue);
         return -1;
     }
     else {
         start_cfg.guard_address = std::string(argv[1]);
         start_cfg.guard_wait_page = std::string(argv[2]);
         start_cfg.ddos_attack_detected_value = std::atoi(std::string(argv[3]).c_str()) - '0';
+        start_cfg.bannedIpsSaveFile = std::string(argv[4]);
     }
 
     io_service io_service;
