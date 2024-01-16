@@ -1,5 +1,7 @@
 # tokio_guard
 
+<hr>
+
 #### About:
 This ddos defender is able to enter suspicious IPs into the database and further prohibit them from entering the site.
 
